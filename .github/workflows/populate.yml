@@ -7,13 +7,16 @@ permissions:
 
 jobs:
   populate:
-    runs-on: ubuntu-22.04 # GLIBC 2.35 <= container's GLIBC 2.36
+    runs-on: ubuntu-22.04
+    env:
+      XZ_OPT: "-2 -T0"
     steps:
       - uses: actions/checkout@v4
 
       - name: Fetch minimal Rust 1.85.0, Godot 4.3 Linux x86_64, and vendor crates
         run: |
           set -euo pipefail
+          rm -rf dist /tmp/work
           mkdir -p dist /tmp/work
 
           # 1. Install minimal Rust 1.85.0 and pack relocatable toolchain (<45M chunks)
@@ -25,7 +28,7 @@ jobs:
           rm -rf "$TC_DIR/share/doc"
           tar -C "$TC_DIR" -cJf - . | split -b 45M - dist/rust-1.85.0-linux-x64.tar.xz.part_
 
-          # 2. Vendor offline crates (gdext + serde + serde_json) and verify offline check
+          # 2. Vendor offline crates (godot/gdext, serde, serde_json, sha2)
           export PATH="$TC_DIR/bin:$PATH"
           mkdir -p /tmp/work/seed/src
           cat > /tmp/work/seed/Cargo.toml << 'EOF'
@@ -39,6 +42,7 @@ jobs:
           godot = "0.2"
           serde = { version = "1.0", features = ["derive"] }
           serde_json = "1.0"
+          sha2 = "0.10"
           EOF
           echo "pub fn ok() {}" > /tmp/work/seed/src/lib.rs
           (cd /tmp/work/seed && cargo generate-lockfile && cargo vendor /tmp/work/vendor > /tmp/work/cargo-config.toml)
@@ -64,7 +68,7 @@ jobs:
           if [ ! -x "$DEST/rust/bin/cargo" ]; then
             cat "$SCRIPT_DIR"/dist/rust-1.85.0-linux-x64.tar.xz.part_* | tar -xJf - -C "$DEST/rust"
           fi
-          if [ ! -x "$DEST/bin/godot4" ]; then
+          if [ ! -x "$DEST/bin" ] || [ ! -x "$DEST/bin/godot4" ]; then
             cat "$SCRIPT_DIR"/dist/godot-4.3-linux-x64.tar.xz.part_* | tar -xJf - -C "$DEST/bin"
           fi
           if [ ! -d "$DEST/vendor" ]; then
@@ -74,4 +78,14 @@ jobs:
           rustc --version
           cargo --version
           godot4 --version
-          
+          EOF
+          chmod +x install-cache.sh
+
+      - name: Commit and push toolchain chunks
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add dist/ install-cache.sh
+          git commit -m "chore: populate offline Linux x86_64 Rust 1.85 + Godot 4.3 + vendored crates"
+          git push
+# --- END OF FILE ---
