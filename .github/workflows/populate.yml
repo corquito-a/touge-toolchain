@@ -1,0 +1,91 @@
+name: Populate Toolchain
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  populate:
+    runs-on: ubuntu-22.04
+    env:
+      XZ_OPT: "-2 -T0"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch minimal Rust 1.85.0, Godot 4.3 Linux x86_64, and vendor crates
+        run: |
+          set -euo pipefail
+          rm -rf dist /tmp/work
+          mkdir -p dist /tmp/work
+
+          # 1. Install minimal Rust 1.85.0 and pack relocatable toolchain (<45M chunks)
+          export RUSTUP_HOME=/tmp/work/rustup
+          export CARGO_HOME=/tmp/work/cargo
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+            | sh -s -- -y --profile minimal --default-toolchain 1.85.0 --no-modify-path
+          TC_DIR="$RUSTUP_HOME/toolchains/1.85.0-x86_64-unknown-linux-gnu"
+          rm -rf "$TC_DIR/share/doc"
+          tar -C "$TC_DIR" -cJf - . | split -b 45M - dist/rust-1.85.0-linux-x64.tar.xz.part_
+
+          # 2. Vendor offline crates (godot/gdext, serde, serde_json, sha2)
+          export PATH="$TC_DIR/bin:$PATH"
+          mkdir -p /tmp/work/seed/src
+          cat > /tmp/work/seed/Cargo.toml << 'EOF'
+          [package]
+          name = "seed"
+          version = "0.1.0"
+          edition = "2021"
+          [lib]
+          crate-type = ["cdylib"]
+          [dependencies]
+          godot = "0.2"
+          serde = { version = "1.0", features = ["derive"] }
+          serde_json = "1.0"
+          sha2 = "0.10"
+          EOF
+          echo "pub fn ok() {}" > /tmp/work/seed/src/lib.rs
+          (cd /tmp/work/seed && cargo generate-lockfile && cargo vendor /tmp/work/vendor > /tmp/work/cargo-config.toml)
+          cp /tmp/work/seed/Cargo.lock dist/Cargo.lock.seed
+          cp /tmp/work/cargo-config.toml dist/cargo-offline-config.toml
+          tar -C /tmp/work -cJf dist/cargo-vendor.tar.xz vendor
+
+          # 3. Fetch Godot 4.3-stable Linux x86_64 binary (<45M chunks)
+          curl -sSfL -o /tmp/work/godot.zip \
+            https://github.com/godotengine/godot-builds/releases/download/4.3-stable/Godot_v4.3-stable_linux.x86_64.zip
+          unzip -q /tmp/work/godot.zip -d /tmp/work/godot
+          mv /tmp/work/godot/Godot_v4.3-stable_linux.x86_64 /tmp/work/godot/godot4
+          chmod +x /tmp/work/godot/godot4
+          tar -C /tmp/work/godot -cJf - godot4 | split -b 45M - dist/godot-4.3-linux-x64.tar.xz.part_
+
+          # 4. Write sandbox cache bootstrapper
+          cat > install-cache.sh << 'EOF'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+          DEST="${TOUGE_TOOLCHAIN_CACHE:-$HOME/.cache/touge-toolchain}"
+          mkdir -p "$DEST/rust" "$DEST/bin" "$DEST"
+          if [ ! -x "$DEST/rust/bin/cargo" ]; then
+            cat "$SCRIPT_DIR"/dist/rust-1.85.0-linux-x64.tar.xz.part_* | tar -xJf - -C "$DEST/rust"
+          fi
+          if [ ! -x "$DEST/bin" ] || [ ! -x "$DEST/bin/godot4" ]; then
+            cat "$SCRIPT_DIR"/dist/godot-4.3-linux-x64.tar.xz.part_* | tar -xJf - -C "$DEST/bin"
+          fi
+          if [ ! -d "$DEST/vendor" ]; then
+            tar -xJf "$SCRIPT_DIR/dist/cargo-vendor.tar.xz" -C "$DEST"
+          fi
+          export PATH="$DEST/rust/bin:$DEST/bin:$PATH"
+          rustc --version
+          cargo --version
+          godot4 --version
+          EOF
+          chmod +x install-cache.sh
+
+      - name: Commit and push toolchain chunks
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add dist/ install-cache.sh
+          git commit -m "chore: populate offline Linux x86_64 Rust 1.85 + Godot 4.3 + vendored crates"
+          git push
+# --- END OF FILE ---
