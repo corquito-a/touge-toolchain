@@ -13,7 +13,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Fetch minimal Rust 1.85.0, Godot 4.3 Linux x86_64, and vendor crates
+      - name: Fetch Rust 1.85.0, Godot 4.3 Linux x86_64, and vendor crates
         run: |
           set -euo pipefail
           rm -rf dist /tmp/work
@@ -43,6 +43,7 @@ jobs:
           serde = { version = "1.0", features = ["derive"] }
           serde_json = "1.0"
           sha2 = "0.10"
+          bumpalo = "3.20.3"
           EOF
           echo "pub fn ok() {}" > /tmp/work/seed/src/lib.rs
           (cd /tmp/work/seed && cargo generate-lockfile && cargo vendor /tmp/work/vendor > /tmp/work/cargo-config.toml)
