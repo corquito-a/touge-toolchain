@@ -23,7 +23,7 @@ jobs:
           export RUSTUP_HOME=/tmp/work/rustup
           export CARGO_HOME=/tmp/work/cargo
           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
-            | sh -s -- -y --profile minimal --default-toolchain 1.85.0 --no-modify-path
+            | sh -s -- -y --profile minimal --default-toolchain 1.85.0 --component rustfmt --component clippy --no-modify-path
           TC_DIR="$RUSTUP_HOME/toolchains/1.85.0-x86_64-unknown-linux-gnu"
           rm -rf "$TC_DIR/share/doc"
           tar -C "$TC_DIR" -cJf - . | split -b 45M - dist/rust-1.85.0-linux-x64.tar.xz.part_
